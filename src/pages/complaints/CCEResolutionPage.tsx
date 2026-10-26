@@ -31,6 +31,7 @@ export default function CCEResolutionPage() {
   const [actionTaken, setActionTaken] = useState<ActionTaken>('software_update')
   const [actionDetails, setActionDetails] = useState('')
   const [additionalNotes, setAdditionalNotes] = useState('')
+  const [communicatedToCustomer, setCommunicatedToCustomer] = useState(true)
 
   useEffect(() => {
     async function loadComplaint() {
@@ -81,7 +82,14 @@ export default function CCEResolutionPage() {
     setSubmitting(true)
     try {
       if (!isSupabaseConfigured) {
-        updateLocalComplaint(complaint.id, { status: 'resolved' })
+        updateLocalComplaint(complaint.id, {
+          status: 'resolved',
+          is_escalated: false,
+          communicated_to_customer: communicatedToCustomer,
+          communicated_at: communicatedToCustomer ? new Date().toISOString() : null,
+          communicated_by: communicatedToCustomer ? profile.id : null,
+          communicated_by_name: communicatedToCustomer ? profile.full_name : null,
+        })
         appendLocalHistory({
           complaint_id: complaint.id,
           event_type: 'cce_resolution_submitted',
@@ -89,7 +97,7 @@ export default function CCEResolutionPage() {
           new_status: 'resolved',
           actor_id: profile.id,
           actor_name: profile.full_name,
-          notes: `CCE Resolution recorded: ${actionTaken}. Action: ${actionDetails.trim()}`,
+          notes: `CCE Resolution recorded: ${actionTaken}. Action: ${actionDetails.trim()}. Customer Communicated: ${communicatedToCustomer ? 'Yes' : 'No'}`,
         })
         toast.success(`Complaint ${complaint.incident_id} successfully marked as Resolved!`)
         navigate('/complaints')
@@ -110,7 +118,14 @@ export default function CCEResolutionPage() {
       // 2. Mark complaint as authoritative 'resolved'
       const { error: updateError } = await supabase
         .from('complaints')
-        .update({ status: 'resolved' })
+        .update({
+          status: 'resolved',
+          is_escalated: false,
+          communicated_to_customer: communicatedToCustomer,
+          communicated_at: communicatedToCustomer ? new Date().toISOString() : null,
+          communicated_by: communicatedToCustomer ? profile.id : null,
+          communicated_by_name: communicatedToCustomer ? profile.full_name : null,
+        })
         .eq('id', complaint.id)
       if (updateError) throw updateError
 
@@ -122,7 +137,7 @@ export default function CCEResolutionPage() {
         new_status: 'resolved',
         actor_id: profile.id,
         actor_name: profile.full_name,
-        notes: `CCE Resolution recorded: ${actionTaken}. Action: ${actionDetails.trim()}`,
+        notes: `CCE Resolution recorded: ${actionTaken}. Action: ${actionDetails.trim()}. Customer Communicated: ${communicatedToCustomer ? 'Yes' : 'No'}`,
       })
 
       toast.success(`Complaint ${complaint.incident_id} successfully marked as Resolved!`)
@@ -276,6 +291,30 @@ export default function CCEResolutionPage() {
                 onChange={(e) => setAdditionalNotes(e.target.value)}
                 className="form-input"
               />
+            </div>
+
+            {/* Customer Communication Checkbox for CCE */}
+            <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Customer Communication</span>
+                </div>
+                <div className="text-xs text-gray-600 mt-0.5">
+                  Confirm if the resolution details have been explained/delivered to the customer
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-2 rounded-lg border border-emerald-300 shadow-xs hover:bg-emerald-50/40">
+                <input
+                  type="checkbox"
+                  checked={communicatedToCustomer}
+                  onChange={(e) => setCommunicatedToCustomer(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
+                />
+                <span className="text-xs font-bold text-emerald-800">
+                  {communicatedToCustomer ? '✓ Communicated to Customer' : 'Pending Customer Call'}
+                </span>
+              </label>
             </div>
           </div>
         </div>

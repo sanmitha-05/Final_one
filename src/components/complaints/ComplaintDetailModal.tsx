@@ -84,7 +84,7 @@ export default function ComplaintDetailModal({
     setVerifying(true)
     try {
       if (!isSupabaseConfigured) {
-        updateLocalComplaint(complaint.id, { status: 'resolved' })
+        updateLocalComplaint(complaint.id, { status: 'resolved', is_escalated: true })
         appendLocalHistory({
           complaint_id: complaint.id,
           event_type: 'fi_resolution_verified_closure',
@@ -100,7 +100,7 @@ export default function ComplaintDetailModal({
         return
       }
 
-      await supabase.from('complaints').update({ status: 'resolved' }).eq('id', complaint.id)
+      await supabase.from('complaints').update({ status: 'resolved', is_escalated: true }).eq('id', complaint.id)
       await supabase.from('complaint_history').insert({
         complaint_id: complaint.id,
         event_type: 'fi_resolution_verified_closure',
@@ -120,6 +120,59 @@ export default function ComplaintDetailModal({
     }
   }
 
+  const [commStatus, setCommStatus] = useState<boolean>(complaint.communicated_to_customer ?? false)
+
+  const handleToggleCommunication = async () => {
+    const newStatus = !commStatus
+    try {
+      if (!isSupabaseConfigured) {
+        updateLocalComplaint(complaint.id, {
+          communicated_to_customer: newStatus,
+          communicated_at: newStatus ? new Date().toISOString() : null,
+          communicated_by: newStatus ? profile?.id : null,
+          communicated_by_name: newStatus ? profile?.full_name : null,
+        })
+        appendLocalHistory({
+          complaint_id: complaint.id,
+          event_type: 'customer_communication_updated',
+          previous_status: complaint.status,
+          new_status: complaint.status,
+          actor_id: profile?.id || 'cce',
+          actor_name: profile?.full_name || 'CCE',
+          notes: `Customer communication marked as: ${newStatus ? 'Yes (Communicated)' : 'Pending'} by ${profile?.full_name || 'CCE'}`,
+        })
+        setCommStatus(newStatus)
+        toast.success(newStatus ? 'Customer communication confirmed!' : 'Communication reset to pending')
+        return
+      }
+
+      await supabase
+        .from('complaints')
+        .update({
+          communicated_to_customer: newStatus,
+          communicated_at: newStatus ? new Date().toISOString() : null,
+          communicated_by: newStatus ? profile?.id : null,
+          communicated_by_name: newStatus ? profile?.full_name : null,
+        })
+        .eq('id', complaint.id)
+
+      await supabase.from('complaint_history').insert({
+        complaint_id: complaint.id,
+        event_type: 'customer_communication_updated',
+        previous_status: complaint.status,
+        new_status: complaint.status,
+        actor_id: profile?.id || 'cce',
+        actor_name: profile?.full_name || 'CCE',
+        notes: `Customer communication marked as: ${newStatus ? 'Yes (Communicated)' : 'Pending'} by ${profile?.full_name || 'CCE'}`,
+      })
+
+      setCommStatus(newStatus)
+      toast.success(newStatus ? 'Customer communication confirmed!' : 'Communication reset to pending')
+    } catch (err: any) {
+      toast.error('Failed to update communication status: ' + err.message)
+    }
+  }
+
   if (!isOpen) return null
 
   return (
@@ -133,7 +186,7 @@ export default function ComplaintDetailModal({
                 <h2 className="text-xl font-bold font-mono tracking-tight">
                   {complaint.incident_id}
                 </h2>
-                <StatusBadge status={complaint.status} />
+                <StatusBadge status={complaint.status} isEscalated={complaint.is_escalated || !!escalation} />
               </div>
               <p className="text-xs text-gray-400 mt-0.5">
                 Chassis: <span className="font-mono text-gray-300">{complaint.chassis_vin}</span> • Reported {complaint.date_of_report}
@@ -200,6 +253,44 @@ export default function ComplaintDetailModal({
                   </div>
                 </div>
               </div>
+
+              {/* Customer Communication Status for Resolved Complaints */}
+              {complaint.status === 'resolved' && (
+                <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        commStatus ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-gray-900">
+                        Customer Communication: {commStatus ? 'Communicated ✓' : 'Pending Customer Communication'}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {commStatus
+                          ? 'CCE has communicated this resolution to the customer'
+                          : 'Resolution has not yet been confirmed with customer by CCE'}
+                      </div>
+                    </div>
+                  </div>
+                  {(profile?.role === 'cce' || profile?.role === 'admin') && (
+                    <button
+                      type="button"
+                      onClick={handleToggleCommunication}
+                      className={`btn-sm text-xs font-bold transition-all shadow-xs ${
+                        commStatus
+                          ? 'btn-secondary text-gray-700 hover:text-red-700 hover:bg-red-50 hover:border-red-200'
+                          : 'btn-primary bg-emerald-600 hover:bg-emerald-700 text-white'
+                      }`}
+                    >
+                      {commStatus ? 'Reset to Pending' : '✓ Mark Communicated'}
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Problem Description */}
               <div className="space-y-2">

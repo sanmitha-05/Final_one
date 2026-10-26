@@ -1,29 +1,28 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FilePlus, Upload, Shield, Plus, Trash2, CheckCircle2, Bike } from 'lucide-react'
+import { FilePlus, Bike, Plus, Trash2, FileSpreadsheet, Settings, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supabase, isSupabaseConfigured } from '../../lib/supabase'
-import { saveLocalComplaintsBatch, appendLocalHistory, lookupVehicle, KNOWN_VEHICLES } from '../../lib/mockStore'
+import {
+  saveLocalComplaintsBatch,
+  appendLocalHistory,
+  lookupVehicle,
+  KNOWN_VEHICLES,
+  getAllLocalVehicles,
+} from '../../lib/mockStore'
 import { useAuth } from '../../contexts/AuthContext'
+import { useProblemCategories } from '../../hooks/useProblemCategories'
+import ImportCustomerExcelModal from '../../components/vehicles/ImportCustomerExcelModal'
+import ManageProblemCategoriesModal from '../../components/fi/ManageProblemCategoriesModal'
 import type { Complaint } from '../../types/database'
 
-const COMMON_PROBLEMS = [
-  'Vehicle not turning ON',
-  'Charging issue',
-  'App login issue',
-  'Error code issue',
-  'Display not working',
-  'BMS issue',
-  'App connectivity issue',
-  'Unexpected shutdown',
-  'Regenerative braking failure',
-  'Throttle response delayed',
-  'Fast charging communication timeout',
-  'High voltage isolation warning',
+const SOURCES = [
+  'Customer Direct',
+  'Call',
+  'Whatsapp',
+  'Email',
   'Other',
 ]
-
-const SOURCES = ['Service Center', 'Customer', 'Online', 'Dealer', 'Field Technician']
 const PRIORITY_LEVELS = ['low', 'medium', 'high', 'critical'] as const
 
 interface IncidentItemState {
@@ -42,10 +41,15 @@ export default function ComplaintRegistrationPage() {
   const { profile } = useAuth()
   const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
+  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false)
+  const [isCategoriesModalOpen, setIsCategoriesModalOpen] = useState(false)
+
+  // Dynamic problem categories from hook (backed by Supabase + local fallback)
+  const { categories, loading: categoriesLoading } = useProblemCategories()
 
   // Report & Bike Details
   const [dateOfReport, setDateOfReport] = useState(new Date().toISOString().split('T')[0])
-  const [source, setSource] = useState('Service Center')
+  const [source, setSource] = useState('Customer Direct')
   const [chassisVin, setChassisVin] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [customerContact, setCustomerContact] = useState('')
@@ -279,14 +283,12 @@ export default function ComplaintRegistrationPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Section 1: Bike & Customer Details (Auto-mapped via Chassis #) */}
         <div className="form-section">
-          <div className="form-section-header flex items-center justify-between">
+          <div className="form-section-header flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Bike className="w-5 h-5 text-raptee-500" />
               <h2 className="form-section-title">Vehicle & Customer Details</h2>
             </div>
-            <span className="text-xs text-gray-400">
-              Chassis entry auto-maps customer & registration details
-            </span>
+
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -297,29 +299,59 @@ export default function ComplaintRegistrationPage() {
                 <input
                   type="text"
                   required
+                  list="chassis-options"
                   placeholder="Type or enter Chassis # (e.g. P5KTAAACD6MP00011)"
                   value={chassisVin}
                   onChange={(e) => handleChassisChange(e.target.value)}
                   className="form-input font-mono uppercase font-semibold text-gray-900 border-raptee-500/40 focus:border-raptee-500"
                 />
+                <datalist id="chassis-options">
+                  {getAllLocalVehicles().map((v) => (
+                    <option key={v.chassis_vin} value={v.chassis_vin}>
+                      {v.customer_name ? `${v.customer_name} (${v.registration_number || v.vehicle_model})` : v.chassis_vin}
+                    </option>
+                  ))}
+                </datalist>
+
                 {/* Quick Select Buttons for sample chassis */}
-                <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
-                  <span className="text-[11px] text-gray-400">Quick demo chassis:</span>
-                  {KNOWN_VEHICLES.map((kv) => (
+                {getAllLocalVehicles().length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+                    <span className="text-[11px] text-gray-400">Imported vehicles:</span>
+                    {getAllLocalVehicles().slice(0, 5).map((kv) => (
+                      <button
+                        type="button"
+                        key={kv.chassis_vin}
+                        onClick={() => handleChassisChange(kv.chassis_vin)}
+                        className={`px-1.5 py-0.5 rounded font-mono text-[11px] border transition-colors ${
+                          chassisVin.toUpperCase() === kv.chassis_vin
+                            ? 'bg-raptee-50 border-raptee-400 text-raptee-700 font-semibold'
+                            : 'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-600'
+                        }`}
+                        title={kv.customer_name || kv.chassis_vin}
+                      >
+                        {kv.chassis_vin.slice(-7)}
+                      </button>
+                    ))}
                     <button
                       type="button"
-                      key={kv.chassis_vin}
-                      onClick={() => handleChassisChange(kv.chassis_vin)}
-                      className={`px-1.5 py-0.5 rounded font-mono text-[11px] border transition-colors ${
-                        chassisVin.toUpperCase() === kv.chassis_vin
-                          ? 'bg-raptee-50 border-raptee-400 text-raptee-700 font-semibold'
-                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-600'
-                      }`}
+                      onClick={() => setIsExcelImportOpen(true)}
+                      className="text-[11px] text-emerald-600 hover:text-emerald-800 font-medium underline ml-1"
                     >
-                      {kv.chassis_vin.slice(-7)}
+                      + Import more from Excel
                     </button>
-                  ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-gray-400 flex items-center gap-1">
+                    <span>No customer vehicles loaded yet.</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsExcelImportOpen(true)}
+                      className="text-emerald-600 hover:text-emerald-800 font-medium underline"
+                    >
+                      Import Excel (.xlsx) to enable auto-mapping
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -450,7 +482,20 @@ export default function ComplaintRegistrationPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="form-label form-label-required">Incident / Problem</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="form-label form-label-required mb-0">Incident / Problem</label>
+                    {(profile?.role === 'field_intelligence' || profile?.role === 'admin') && (
+                      <button
+                        type="button"
+                        onClick={() => setIsCategoriesModalOpen(true)}
+                        className="text-[11px] text-teal-600 hover:text-teal-800 font-medium flex items-center gap-1 hover:underline"
+                        title="Add or remove categories as Field Intelligence"
+                      >
+                        <Settings className="w-3 h-3" />
+                        <span>Manage Options</span>
+                      </button>
+                    )}
+                  </div>
                   <select
                     required
                     value={inc.incidentProblem}
@@ -458,7 +503,7 @@ export default function ComplaintRegistrationPage() {
                     className="form-input"
                   >
                     <option value="">- Select Problem Category -</option>
-                    {COMMON_PROBLEMS.map((p) => (
+                    {categories.map((p) => (
                       <option key={p} value={p}>
                         {p}
                       </option>
@@ -570,7 +615,7 @@ export default function ComplaintRegistrationPage() {
               className="btn-secondary btn-sm text-raptee-700 border-dashed border-raptee-400 hover:bg-raptee-50 py-2.5 px-4"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Add Another Incident for this Bike ({chassisVin || 'Chassis'})</span>
+              <span>Add Another Incident for this Bike ({chassisVin || 'Chassis'})</span>
             </button>
           </div>
         </div>
@@ -594,6 +639,23 @@ export default function ComplaintRegistrationPage() {
           </button>
         </div>
       </form>
+
+      {/* Customer Excel Import Modal */}
+      <ImportCustomerExcelModal
+        isOpen={isExcelImportOpen}
+        onClose={() => setIsExcelImportOpen(false)}
+        onSuccess={() => {
+          if (chassisVin) {
+            handleChassisChange(chassisVin)
+          }
+        }}
+      />
+
+      {/* Manage Problem Categories Modal (FI Role) */}
+      <ManageProblemCategoriesModal
+        isOpen={isCategoriesModalOpen}
+        onClose={() => setIsCategoriesModalOpen(false)}
+      />
     </div>
   )
 }

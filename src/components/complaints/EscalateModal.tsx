@@ -51,7 +51,7 @@ export default function EscalateModal({
           escalated_by: profile.id,
           escalated_by_name: profile.full_name,
         })
-        updateLocalComplaint(complaint.id, { status: 'escalated' })
+        updateLocalComplaint(complaint.id, { status: 'escalated', is_escalated: true })
         appendLocalHistory({
           complaint_id: complaint.id,
           event_type: 'complaint_escalated',
@@ -83,7 +83,7 @@ export default function EscalateModal({
       // 2. Update complaint status to authoritative 'escalated'
       const { error: statusError } = await supabase
         .from('complaints')
-        .update({ status: 'escalated' })
+        .update({ status: 'escalated', is_escalated: true })
         .eq('id', complaint.id)
       if (statusError) throw statusError
 

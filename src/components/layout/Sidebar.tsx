@@ -10,6 +10,7 @@ import {
   LogOut,
   Zap,
   ChevronRight,
+  Bike,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 
@@ -18,6 +19,7 @@ interface NavItem {
   to: string
   icon: React.ReactNode
   roles?: string[]
+  end?: boolean
 }
 
 const navItems: NavItem[] = [
@@ -37,12 +39,18 @@ const navItems: NavItem[] = [
     to: '/complaints',
     icon: <FileText size={18} />,
     roles: ['cce', 'admin'],
+    end: true,
   },
   {
     label: 'Field Intelligence',
     to: '/fi/dashboard',
     icon: <Search size={18} />,
     roles: ['field_intelligence', 'admin'],
+  },
+  {
+    label: 'Vehicles & Customers',
+    to: '/vehicles',
+    icon: <Bike size={18} />,
   },
   {
     label: 'Knowledge Base',
@@ -118,6 +126,7 @@ export default function Sidebar() {
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.end}
             className={({ isActive }) =>
               `sidebar-nav-item${isActive ? ' active' : ''}`
             }

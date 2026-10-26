@@ -9,44 +9,110 @@ export interface VehicleRegistryRecord {
   registration_number: string
 }
 
-export const KNOWN_VEHICLES: VehicleRegistryRecord[] = [
-  {
-    chassis_vin: 'P5KTAAACD6MP00011',
-    customer_name: 'Anand Sharma',
-    customer_contact: '+91 98401 23456',
-    vehicle_model: 'Raptee HV-T30 Sport',
-    registration_number: 'TN 09 BK 2026',
-  },
-  {
-    chassis_vin: 'P5KTAAACD6MP00062',
-    customer_name: 'Kavitha Raman',
-    customer_contact: '+91 97910 88776',
-    vehicle_model: 'Raptee HV-T30',
-    registration_number: 'TN 22 CZ 4401',
-  },
-  {
-    chassis_vin: 'P5KTAAACD6MP00099',
-    customer_name: 'Suresh Menon',
-    customer_contact: '+91 98412 34567',
-    vehicle_model: 'Raptee HV-T30',
-    registration_number: 'KL 07 CD 8821',
-  },
-  {
-    chassis_vin: 'P5KTAAACD6MP00051',
-    customer_name: 'Praveen Das',
-    customer_contact: '+91 94440 11223',
-    vehicle_model: 'Raptee HV-T30 Sport',
-    registration_number: 'KA 01 MJ 3390',
-  },
+// Clean production state — vehicles are loaded exclusively from Supabase / Excel import
+export const KNOWN_VEHICLES: VehicleRegistryRecord[] = []
+
+export const DEFAULT_PROBLEM_CATEGORIES: string[] = [
+  'Vehicle not turning ON',
+  'Charging issue',
+  'App login issue',
+  'Error code issue',
+  'Display not working',
+  'BMS issue',
+  'App connectivity issue',
+  'Unexpected shutdown',
+  'Regenerative braking failure',
+  'Throttle response delayed',
+  'Fast charging communication timeout',
+  'High voltage isolation warning',
+  'Motor Vibration / Unusual Noise',
+  'Keyless Start / Smart Key Failure',
+  'Other',
 ]
+
+const VEHICLES_STORAGE_KEY = 'raptee_customer_vehicles_v2'
+const CATEGORIES_STORAGE_KEY = 'raptee_problem_categories_v2'
+
+export function getAllLocalVehicles(): VehicleRegistryRecord[] {
+  try {
+    const raw = localStorage.getItem(VEHICLES_STORAGE_KEY)
+    if (!raw) {
+      return []
+    }
+    return JSON.parse(raw)
+  } catch {
+    return []
+  }
+}
+
+export function saveLocalVehiclesBatch(newVehicles: VehicleRegistryRecord[]): VehicleRegistryRecord[] {
+  const current = getAllLocalVehicles()
+  const map = new Map<string, VehicleRegistryRecord>()
+
+  // Keep existing
+  current.forEach((v) => map.set(v.chassis_vin.toUpperCase(), v))
+  // Upsert new
+  newVehicles.forEach((v) => {
+    if (v.chassis_vin) {
+      map.set(v.chassis_vin.toUpperCase(), {
+        chassis_vin: v.chassis_vin.trim().toUpperCase(),
+        customer_name: v.customer_name?.trim() || '',
+        customer_contact: v.customer_contact?.trim() || '',
+        vehicle_model: v.vehicle_model?.trim() || 'Raptee.HV',
+        registration_number: v.registration_number?.trim().toUpperCase() || '',
+      })
+    }
+  })
+
+  const merged = Array.from(map.values())
+  localStorage.setItem(VEHICLES_STORAGE_KEY, JSON.stringify(merged))
+  return merged
+}
+
+export function getLocalProblemCategories(): string[] {
+  try {
+    const raw = localStorage.getItem(CATEGORIES_STORAGE_KEY)
+    if (!raw) {
+      localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(DEFAULT_PROBLEM_CATEGORIES))
+      return DEFAULT_PROBLEM_CATEGORIES
+    }
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PROBLEM_CATEGORIES
+  } catch {
+    return DEFAULT_PROBLEM_CATEGORIES
+  }
+}
+
+export function addLocalProblemCategory(name: string): string[] {
+  const current = getLocalProblemCategories()
+  const trimmed = name.trim()
+  if (!trimmed || current.includes(trimmed)) return current
+
+  // Keep 'Other' at the end if present
+  const withoutOther = current.filter((c) => c !== 'Other')
+  const updated = [...withoutOther, trimmed, 'Other']
+  localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(updated))
+  return updated
+}
+
+export function removeLocalProblemCategory(name: string): string[] {
+  const current = getLocalProblemCategories()
+  if (name === 'Other') return current // Keep 'Other' as safe fallback
+  const updated = current.filter((c) => c !== name)
+  localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(updated))
+  return updated
+}
 
 export function lookupVehicle(chassisVin: string): VehicleRegistryRecord | null {
   if (!chassisVin) return null
   const cleaned = chassisVin.trim().toUpperCase()
-  const found = KNOWN_VEHICLES.find((v) => v.chassis_vin.toUpperCase() === cleaned)
+
+  // 1. Check local imported vehicles first
+  const allVehicles = getAllLocalVehicles()
+  const found = allVehicles.find((v) => v.chassis_vin.toUpperCase() === cleaned)
   if (found) return found
 
-  // Also check if any registered complaint has details for this chassis
+  // 2. Fallback check registered complaints
   const complaints = getLocalComplaints()
   const match = complaints.find((c) => c.chassis_vin.toUpperCase() === cleaned)
   if (match) {
@@ -93,6 +159,8 @@ export function saveLocalComplaint(complaint: Complaint): Complaint {
     ...complaint,
     id: complaint.id || `c-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     incident_id: incidentId,
+    is_escalated: complaint.is_escalated ?? false,
+    communicated_to_customer: complaint.communicated_to_customer ?? false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }
@@ -114,6 +182,8 @@ export function saveLocalComplaintsBatch(complaints: Complaint[]): Complaint[] {
       ...c,
       id: c.id || `c-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 7)}`,
       incident_id: incidentId,
+      is_escalated: c.is_escalated ?? false,
+      communicated_to_customer: c.communicated_to_customer ?? false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }

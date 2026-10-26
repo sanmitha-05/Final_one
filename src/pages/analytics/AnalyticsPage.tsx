@@ -56,8 +56,17 @@ export default function AnalyticsPage() {
   const statusCounts: Record<string, number> = {}
   const problemCounts: Record<string, number> = {}
 
+  let totalResolved = 0
+  let communicatedCount = 0
+
   complaints.forEach((c) => {
-    statusCounts[c.status] = (statusCounts[c.status] || 0) + 1
+    let key: string = c.status
+    if (c.status === 'resolved') {
+      totalResolved++
+      if (c.communicated_to_customer) communicatedCount++
+      key = c.is_escalated ? 'escalated_&_resolved' : 'resolved_(direct)'
+    }
+    statusCounts[key] = (statusCounts[key] || 0) + 1
     const p = c.incident_problem || 'Other'
     problemCounts[p] = (problemCounts[p] || 0) + 1
   })
@@ -76,10 +85,9 @@ export default function AnalyticsPage() {
     }))
 
   const total = complaints.length
-  const resolved = statusCounts['resolved'] || 0
-  const escalated = statusCounts['escalated'] || 0
-  const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0
-  const escalationRate = total > 0 ? Math.round((escalated / total) * 100) : 0
+  const resolutionRate = total > 0 ? Math.round((totalResolved / total) * 100) : 0
+  const escalationRate = total > 0 ? Math.round(((statusCounts['escalated'] || 0) + (statusCounts['escalated_&_resolved'] || 0) + (statusCounts['in_progress'] || 0)) / total * 100) : 0
+  const commRate = totalResolved > 0 ? Math.round((communicatedCount / totalResolved) * 100) : 0
 
   return (
     <div className="space-y-6">
@@ -91,7 +99,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Top Level Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="stat-card">
           <div className="flex items-center justify-between text-gray-500 mb-2">
             <span className="text-xs font-semibold uppercase">Total Complaints</span>
@@ -106,6 +114,15 @@ export default function AnalyticsPage() {
             <CheckCircle className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-bold text-emerald-700">{resolutionRate}%</div>
+        </div>
+
+        <div className="stat-card border-l-4 border-l-teal-500">
+          <div className="flex items-center justify-between text-teal-700 mb-2">
+            <span className="text-xs font-semibold uppercase">Customer Comm.</span>
+            <CheckCircle className="w-4 h-4 text-teal-500" />
+          </div>
+          <div className="text-2xl font-bold text-teal-700">{commRate}%</div>
+          <div className="text-[10px] text-gray-400 mt-0.5">{communicatedCount} of {totalResolved} resolved</div>
         </div>
 
         <div className="stat-card border-l-4 border-l-pink-500">

@@ -3,34 +3,10 @@ import type { User, Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
 import type { UserProfile, UserRole } from '../types/database'
 
-const DEMO_USERS: Record<string, UserProfile> = {
-  'radhika@raptee.com': {
-    id: 'demo-radhika-001',
-    email: 'radhika@raptee.com',
-    full_name: 'Radhika S',
-    role: 'cce',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  'sanmitha@raptee.com': {
-    id: 'demo-sanmitha-002',
-    email: 'sanmitha@raptee.com',
-    full_name: 'Sanmitha V',
-    role: 'field_intelligence',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  'admin@raptee.com': {
-    id: 'demo-admin-003',
-    email: 'admin@raptee.com',
-    full_name: 'Admin User',
-    role: 'admin',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
+export interface SignUpResult {
+  error: Error | null
+  pendingApproval?: boolean
+  message?: string
 }
 
 interface AuthContextValue {
@@ -40,6 +16,7 @@ interface AuthContextValue {
   loading: boolean
   isDemoMode: boolean
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
+  signUp: (email: string, password: string, fullName: string, role: UserRole) => Promise<SignUpResult>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
 }
@@ -51,18 +28,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  const [isDemoMode, setIsDemoMode] = useState(!isSupabaseConfigured)
+  const [isDemoMode] = useState(!isSupabaseConfigured)
 
+  // Fetch live user profile from user_profiles table
   const fetchProfile = async (userId: string): Promise<UserProfile | null> => {
     try {
       const { data, error } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
       if (error) {
-        console.warn('Profile not found in Supabase:', error.message)
+        console.warn('Profile fetch notice:', error.message)
         return null
       }
       return data as UserProfile
@@ -82,46 +60,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isMounted = true
 
-    // Safety timeout: Ensure loading is never permanently stuck
+    // Clean up any old demo user lingering in localStorage
+    try {
+      localStorage.removeItem('raptee_demo_user')
+    } catch {}
+
     const timer = setTimeout(() => {
       if (isMounted) setLoading(false)
-    }, 1500)
+    }, 2000)
 
     const initAuth = async () => {
-      // 1. Check local demo session first if not configured
       if (!isSupabaseConfigured) {
-        try {
-          const cached = localStorage.getItem('raptee_demo_user')
-          if (cached) {
-            const p: UserProfile = JSON.parse(cached)
-            if (isMounted) {
-              setProfile(p)
-              setUser({ id: p.id, email: p.email } as User)
-            }
-          }
-        } catch (e) {
-          console.warn('Demo session restore error:', e)
-        }
         if (isMounted) setLoading(false)
         return
       }
 
-      // 2. Real Supabase Auth
       try {
         const { data: { session: s }, error } = await supabase.auth.getSession()
         if (error) throw error
 
-        if (isMounted) {
-          setSession(s)
-          setUser(s?.user ?? null)
-          if (s?.user) {
-            const p = await fetchProfile(s.user.id)
+        if (isMounted && s?.user) {
+          const p = await fetchProfile(s.user.id)
+          // Security gate: If user is not active / unapproved, sign out immediately
+          if (p && !p.is_active) {
+            await supabase.auth.signOut()
+            setUser(null)
+            setProfile(null)
+            setSession(null)
+          } else {
+            setSession(s)
+            setUser(s.user)
             setProfile(p)
           }
         }
       } catch (err) {
-        console.warn('Supabase getSession failed, falling back to demo mode:', err)
-        setIsDemoMode(true)
+        console.warn('Supabase getSession notice:', err)
       } finally {
         if (isMounted) setLoading(false)
       }
@@ -129,25 +102,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initAuth()
 
-    // Listen for auth changes if real Supabase is configured
     let subscription: { unsubscribe: () => void } | null = null
     if (isSupabaseConfigured) {
       try {
         const { data } = supabase.auth.onAuthStateChange(async (_event, s) => {
           if (!isMounted) return
-          setSession(s)
-          setUser(s?.user ?? null)
           if (s?.user) {
             const p = await fetchProfile(s.user.id)
-            setProfile(p)
+            if (p && !p.is_active) {
+              await supabase.auth.signOut()
+              setUser(null)
+              setProfile(null)
+              setSession(null)
+            } else {
+              setSession(s)
+              setUser(s.user)
+              setProfile(p)
+            }
           } else {
+            setUser(null)
             setProfile(null)
+            setSession(null)
           }
           setLoading(false)
         })
         subscription = data.subscription
       } catch (err) {
-        console.warn('Auth state subscription failed:', err)
+        console.warn('Auth state change listener notice:', err)
       }
     }
 
@@ -158,49 +139,156 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // Strict live Supabase sign in
   const signIn = async (email: string, password: string) => {
-    // If not configured with a live Supabase instance, authenticate via demo users
-    if (!isSupabaseConfigured || isDemoMode) {
-      const lower = email.trim().toLowerCase()
-      const demoProfile = DEMO_USERS[lower] || {
-        id: `demo-${Date.now()}`,
-        email: lower,
-        full_name: lower.split('@')[0],
-        role: 'cce' as UserRole,
-        is_active: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
+    const lower = email.trim().toLowerCase()
 
-      setProfile(demoProfile)
-      setUser({ id: demoProfile.id, email: demoProfile.email } as User)
-      localStorage.setItem('raptee_demo_user', JSON.stringify(demoProfile))
-      return { error: null }
+    if (!isSupabaseConfigured) {
+      return { error: new Error('Database is not configured. Please check VITE_SUPABASE_URL.') }
     }
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) return { error }
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: lower,
+        password,
+      })
 
-      if (data.user) {
-        let p = await fetchProfile(data.user.id)
-        if (!p) {
-          // Fallback profile if row hasn't been created yet
-          p = {
-            id: data.user.id,
-            email: data.user.email || email,
-            full_name: data.user.email?.split('@')[0] || 'Raptee User',
-            role: 'cce',
-            is_active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+      if (error) {
+        // Friendly message for email-not-confirmed case
+        if (
+          error.message?.toLowerCase().includes('email not confirmed') ||
+          error.message?.toLowerCase().includes('not confirmed')
+        ) {
+          return {
+            error: new Error(
+              'EMAIL_NOT_CONFIRMED'
+            ),
           }
         }
-        setProfile(p)
-        setUser(data.user)
+        return { error }
       }
+
+      if (!data.user) {
+        return { error: new Error('User account not found.') }
+      }
+
+      // Check profile in user_profiles
+      let p = await fetchProfile(data.user.id)
+
+      if (!p) {
+        // If profile row doesn't exist yet, insert it
+        const isAdmin = lower === 'admin@raptee.com' || data.user.user_metadata?.role === 'admin'
+        p = {
+          id: data.user.id,
+          email: lower,
+          full_name: data.user.user_metadata?.full_name || lower.split('@')[0],
+          role: (data.user.user_metadata?.role as UserRole) || (isAdmin ? 'admin' : 'cce'),
+          is_active: isAdmin, // Only default admin is auto-active; others require admin approval!
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+        try {
+          await supabase.from('user_profiles').upsert(p)
+        } catch (insertErr) {
+          console.warn('Profile sync notice:', insertErr)
+        }
+      }
+
+      // MANDATORY APPROVAL CHECK:
+      // If the administrator has not approved this account yet, block login
+      if (!p.is_active) {
+        await supabase.auth.signOut()
+        setUser(null)
+        setProfile(null)
+        setSession(null)
+        return {
+          error: new Error(
+            'Account Pending Approval: Your account has been registered, but requires Administrator approval before you can access the platform. Please contact your system administrator (admin@raptee.com) to approve your access.'
+          ),
+        }
+      }
+
+      setProfile(p)
+      setUser(data.user)
+      setSession(data.session)
       return { error: null }
-    } catch (err) {
+    } catch (err: any) {
+      return { error: err as Error }
+    }
+  }
+
+  // Sign up with Admin Approval requirement
+  const signUp = async (
+    email: string,
+    password: string,
+    fullName: string,
+    role: UserRole
+  ): Promise<SignUpResult> => {
+    const lower = email.trim().toLowerCase()
+
+    if (!isSupabaseConfigured) {
+      return { error: new Error('Database is not configured. Please check VITE_SUPABASE_URL.') }
+    }
+
+    try {
+      const isAdmin = lower === 'admin@raptee.com' || role === 'admin'
+
+      const { data, error } = await supabase.auth.signUp({
+        email: lower,
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            role,
+          },
+        },
+      })
+
+      if (error) {
+        return { error }
+      }
+
+      if (data.user) {
+        const profileRow: UserProfile = {
+          id: data.user.id,
+          email: lower,
+          full_name: fullName.trim(),
+          role,
+          is_active: isAdmin, // Only admin is auto-approved; all other employees require admin approval
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+
+        // Upsert into user_profiles table
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .upsert(profileRow)
+
+        if (profileError) {
+          console.warn('user_profiles upsert warning:', profileError.message)
+        }
+
+        // If not an admin, enforce approval workflow: sign out immediately
+        if (!isAdmin) {
+          await supabase.auth.signOut()
+          setUser(null)
+          setProfile(null)
+          setSession(null)
+          return {
+            error: null,
+            pendingApproval: true,
+            message:
+              'Account registered successfully! An Administrator must approve your account before you can sign in. Please contact your administrator to activate your profile.',
+          }
+        }
+
+        setProfile(profileRow)
+        setUser(data.user)
+        setSession(data.session)
+      }
+
+      return { error: null, pendingApproval: false }
+    } catch (err: any) {
       return { error: err as Error }
     }
   }
@@ -211,7 +299,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.auth.signOut()
       } catch {}
     }
-    localStorage.removeItem('raptee_demo_user')
     setUser(null)
     setProfile(null)
     setSession(null)
@@ -226,6 +313,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         isDemoMode,
         signIn,
+        signUp,
         signOut,
         refreshProfile,
       }}

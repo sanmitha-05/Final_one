@@ -7,14 +7,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Shield,
+  Tag,
+  CheckCircle2,
+  Clock,
 } from 'lucide-react'
 import { useFIComplaints } from '../../hooks/useFIComplaints'
 import StatusBadge from '../../components/ui/StatusBadge'
 import LoadingSpinner from '../../components/ui/LoadingSpinner'
 import EmptyState from '../../components/ui/EmptyState'
+import ManageProblemCategoriesModal from '../../components/fi/ManageProblemCategoriesModal'
 
 export default function FIDashboardPage() {
   const navigate = useNavigate()
+  const [isCategoriesModalOpen, setIsCategoriesModalOpen] = useState(false)
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
@@ -49,6 +54,15 @@ export default function FIDashboardPage() {
           <p className="page-subtitle">
             View complaints escalated by CCE. Investigate and submit resolution.
           </p>
+        </div>
+        <div>
+          <button
+            onClick={() => setIsCategoriesModalOpen(true)}
+            className="btn-secondary flex items-center gap-2 border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100 shadow-sm font-semibold"
+          >
+            <Tag className="w-4 h-4 text-teal-600" />
+            <span>Manage Problem Categories</span>
+          </button>
         </div>
       </div>
 
@@ -141,6 +155,7 @@ export default function FIDashboardPage() {
                   <th>Chassis / VIN</th>
                   <th>Incident / Problem</th>
                   <th>Status</th>
+                  <th className="text-center">Communicated to Customer</th>
                   <th className="text-right">Action</th>
                 </tr>
               </thead>
@@ -164,7 +179,24 @@ export default function FIDashboardPage() {
                       {c.incident_problem}
                     </td>
                     <td>
-                      <StatusBadge status={c.status} />
+                      <StatusBadge status={c.status} isEscalated={true} />
+                    </td>
+                    <td className="text-center">
+                      {c.status === 'resolved' ? (
+                        c.communicated_to_customer ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <span>Yes</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            <Clock className="w-3 h-3 text-amber-600" />
+                            <span>Pending (CCE)</span>
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-gray-300 text-xs italic">—</span>
+                      )}
                     </td>
                     <td className="text-right">
                       <button
@@ -209,6 +241,12 @@ export default function FIDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal for FI to add/remove problem categories */}
+      <ManageProblemCategoriesModal
+        isOpen={isCategoriesModalOpen}
+        onClose={() => setIsCategoriesModalOpen(false)}
+      />
     </div>
   )
 }

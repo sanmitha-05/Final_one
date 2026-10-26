@@ -43,7 +43,6 @@ const OUTCOME_OPTIONS: { value: ResolutionOutcome; label: string }[] = [
   { value: 'fix_implemented_verified', label: 'Fix Implemented and Verified (Resolves Complaint)' },
   { value: 'recommended_fix_pending', label: 'Recommended Fix — Pending Implementation' },
   { value: 'further_investigation_required', label: 'Further Investigation Required' },
-  { value: 'unable_to_reproduce', label: 'Unable to Reproduce Issue' },
   { value: 'no_fix_identified', label: 'No Fix Identified Yet' },
   { value: 'other', label: 'Other' },
 ]
@@ -179,7 +178,7 @@ export default function FIResolutionPage() {
           submitted_by_name: profile.full_name,
         })
 
-        updateLocalComplaint(complaint.id, { status: newComplaintStatus })
+        updateLocalComplaint(complaint.id, { status: newComplaintStatus, is_escalated: true })
 
         appendLocalHistory({
           complaint_id: complaint.id,
@@ -230,7 +229,7 @@ export default function FIResolutionPage() {
       // 2. Strict status transition logic (Module 6 & 7 rule: recommendation != proof of resolution)
       const { error: statusError } = await supabase
         .from('complaints')
-        .update({ status: newComplaintStatus })
+        .update({ status: newComplaintStatus, is_escalated: true })
         .eq('id', complaint.id)
 
       if (statusError) throw statusError

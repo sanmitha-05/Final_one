@@ -5,7 +5,8 @@ import type { Complaint, ComplaintStatus } from '../types/database'
 
 interface UseComplaintsParams {
   search?: string
-  status?: ComplaintStatus | ''
+  status?: ComplaintStatus | 'resolved_direct' | 'escalated_resolved' | ''
+  communicated?: 'yes' | 'no' | ''
   dateFrom?: string
   dateTo?: string
   page?: number
@@ -25,6 +26,7 @@ interface UseComplaintsResult {
 export function useComplaints({
   search = '',
   status = '',
+  communicated = '',
   dateFrom = '',
   dateTo = '',
   page = 1,
@@ -62,8 +64,18 @@ export function useComplaints({
           )
         }
 
-        if (status) {
+        if (status === 'resolved_direct') {
+          all = all.filter((c) => c.status === 'resolved' && !c.is_escalated)
+        } else if (status === 'escalated_resolved') {
+          all = all.filter((c) => c.status === 'resolved' && !!c.is_escalated)
+        } else if (status) {
           all = all.filter((c) => c.status === status)
+        }
+
+        if (communicated === 'yes') {
+          all = all.filter((c) => c.status === 'resolved' && !!c.communicated_to_customer)
+        } else if (communicated === 'no') {
+          all = all.filter((c) => c.status === 'resolved' && !c.communicated_to_customer)
         }
 
         if (dateFrom) {
@@ -97,8 +109,18 @@ export function useComplaints({
           )
         }
 
-        if (status) {
+        if (status === 'resolved_direct') {
+          query = query.eq('status', 'resolved').eq('is_escalated', false)
+        } else if (status === 'escalated_resolved') {
+          query = query.eq('status', 'resolved').eq('is_escalated', true)
+        } else if (status) {
           query = query.eq('status', status)
+        }
+
+        if (communicated === 'yes') {
+          query = query.eq('status', 'resolved').eq('communicated_to_customer', true)
+        } else if (communicated === 'no') {
+          query = query.eq('status', 'resolved').eq('communicated_to_customer', false)
         }
 
         if (dateFrom) {
@@ -142,7 +164,7 @@ export function useComplaints({
     return () => {
       cancelled = true
     }
-  }, [search, status, dateFrom, dateTo, page, pageSize, sortBy, sortDir, tick])
+  }, [search, status, communicated, dateFrom, dateTo, page, pageSize, sortBy, sortDir, tick])
 
   return { complaints, total, loading, error, refetch }
 }

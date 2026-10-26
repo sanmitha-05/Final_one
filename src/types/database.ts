@@ -73,6 +73,11 @@ export interface Complaint {
   fault_code: string | null
   priority: 'low' | 'medium' | 'high' | 'critical'
   status: ComplaintStatus
+  is_escalated?: boolean
+  communicated_to_customer?: boolean
+  communicated_at?: string | null
+  communicated_by?: string | null
+  communicated_by_name?: string | null
   created_at: string
   updated_at: string
 }
@@ -160,12 +165,42 @@ export interface KnowledgeBaseRecord {
   created_at: string
 }
 
+export interface CustomerVehicle {
+  id: string
+  chassis_vin: string
+  customer_name: string | null
+  customer_contact: string | null
+  vehicle_model: string | null
+  registration_number: string | null
+  delivery_date: string | null
+  metadata: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProblemCategory {
+  id: string
+  name: string
+  is_active: boolean
+  created_at: string
+}
+
 // ============================================================
 // Database schema type (for Supabase client typing)
 // ============================================================
 export interface Database {
   public: {
     Tables: {
+      customer_vehicles: {
+        Row: CustomerVehicle
+        Insert: Omit<CustomerVehicle, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<CustomerVehicle, 'id' | 'created_at'>>
+      }
+      problem_categories: {
+        Row: ProblemCategory
+        Insert: Omit<ProblemCategory, 'id' | 'created_at'>
+        Update: Partial<Omit<ProblemCategory, 'id' | 'created_at'>>
+      }
       user_profiles: {
         Row: UserProfile
         Insert: Omit<UserProfile, 'created_at' | 'updated_at'>
