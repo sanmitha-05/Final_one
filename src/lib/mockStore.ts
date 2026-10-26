@@ -1,4 +1,5 @@
 import type { Complaint, ComplaintHistory, Escalation, CCEResolution, FIInvestigation } from '../types/database'
+import customerSeedData from './rapteeCustomersData.json'
 
 // Vehicle Registry for auto-mapping when Chassis / VIN is entered
 export interface VehicleRegistryRecord {
@@ -7,10 +8,11 @@ export interface VehicleRegistryRecord {
   customer_contact: string
   vehicle_model: string
   registration_number: string
+  delivery_date?: string | null
 }
 
-// Clean production state — vehicles are loaded exclusively from Supabase / Excel import
-export const KNOWN_VEHICLES: VehicleRegistryRecord[] = []
+// 80 verified Raptee customer vehicles from CCE register
+export const KNOWN_VEHICLES: VehicleRegistryRecord[] = customerSeedData as VehicleRegistryRecord[]
 
 export const DEFAULT_PROBLEM_CATEGORIES: string[] = [
   'Vehicle not turning ON',
@@ -37,11 +39,12 @@ export function getAllLocalVehicles(): VehicleRegistryRecord[] {
   try {
     const raw = localStorage.getItem(VEHICLES_STORAGE_KEY)
     if (!raw) {
-      return []
+      return KNOWN_VEHICLES
     }
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : KNOWN_VEHICLES
   } catch {
-    return []
+    return KNOWN_VEHICLES
   }
 }
 
@@ -103,18 +106,33 @@ export function removeLocalProblemCategory(name: string): string[] {
   return updated
 }
 
-export function lookupVehicle(chassisVin: string): VehicleRegistryRecord | null {
-  if (!chassisVin) return null
-  const cleaned = chassisVin.trim().toUpperCase()
+export function lookupVehicle(searchQuery: string): VehicleRegistryRecord | null {
+  if (!searchQuery) return null
+  const cleaned = searchQuery.trim().toUpperCase()
+  const cleanedNoSpaces = cleaned.replace(/[\s-]/g, '')
 
-  // 1. Check local imported vehicles first
+  // 1. Check local imported vehicles first (by Chassis VIN or Registration Number)
   const allVehicles = getAllLocalVehicles()
-  const found = allVehicles.find((v) => v.chassis_vin.toUpperCase() === cleaned)
+  const found = allVehicles.find((v) => {
+    const vVin = v.chassis_vin.toUpperCase().trim()
+    const vReg = (v.registration_number || '').toUpperCase().trim()
+    const vRegNoSpaces = vReg.replace(/[\s-]/g, '')
+
+    return (
+      vVin === cleaned ||
+      vReg === cleaned ||
+      (cleanedNoSpaces.length >= 3 && vRegNoSpaces === cleanedNoSpaces)
+    )
+  })
   if (found) return found
 
   // 2. Fallback check registered complaints
   const complaints = getLocalComplaints()
-  const match = complaints.find((c) => c.chassis_vin.toUpperCase() === cleaned)
+  const match = complaints.find((c) => {
+    const cVin = c.chassis_vin.toUpperCase().trim()
+    const cReg = (c.registration_number || '').toUpperCase().trim()
+    return cVin === cleaned || cReg === cleaned
+  })
   if (match) {
     return {
       chassis_vin: match.chassis_vin,

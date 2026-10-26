@@ -34,7 +34,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.user_profiles (id, email, full_name, role)
+  INSERT INTO public.user_profiles (id, email, full_name, role, is_active)
   VALUES (
     new.id,
     new.email,
@@ -42,12 +42,15 @@ BEGIN
     CASE 
       WHEN (new.raw_user_meta_data->>'role') = 'field_intelligence' THEN 'field_intelligence'::user_role
       WHEN (new.raw_user_meta_data->>'role') = 'admin' THEN 'admin'::user_role
+      WHEN new.email = 'admin@raptee.com' THEN 'admin'::user_role
       ELSE 'cce'::user_role
+    END,
+    CASE
+      WHEN new.email = 'admin@raptee.com' OR (new.raw_user_meta_data->>'role') = 'admin' THEN true
+      ELSE false
     END
   )
-  ON CONFLICT (id) DO UPDATE
-    SET full_name = EXCLUDED.full_name,
-        role = EXCLUDED.role;
+  ON CONFLICT (id) DO NOTHING; -- CRITICAL: Never reset role or approval status on login!
   RETURN NEW;
 EXCEPTION
   WHEN OTHERS THEN
@@ -56,7 +59,8 @@ EXCEPTION
 END;
 $$;
 
--- 4. Re-attach the trigger
+-- 4. Re-attach the trigger ONLY on INSERT (never on UPDATE/relogin)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
-  AFTER INSERT OR UPDATE ON auth.users
+  AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();

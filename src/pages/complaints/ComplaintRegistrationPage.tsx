@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FilePlus, Bike, Plus, Trash2, FileSpreadsheet, Settings, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -55,6 +55,23 @@ export default function ComplaintRegistrationPage() {
   const [customerContact, setCustomerContact] = useState('')
   const [vehicleModel, setVehicleModel] = useState('Raptee HV-T30')
   const [registrationNumber, setRegistrationNumber] = useState('')
+  const [deliveryDate, setDeliveryDate] = useState('')
+
+  // Supabase-loaded vehicle list for datalist dropdown
+  const [remoteVehicles, setRemoteVehicles] = useState<{ chassis_vin: string; customer_name: string; registration_number: string; vehicle_model: string }[]>([])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    supabase
+      .from('customer_vehicles')
+      .select('chassis_vin, customer_name, registration_number, vehicle_model')
+      .order('chassis_vin', { ascending: true })
+      .limit(500)
+      .then(({ data, error }) => {
+        console.log('[customer_vehicles load]', { count: data?.length, error })
+        if (data && data.length > 0) setRemoteVehicles(data)
+      })
+  }, [])
 
   // Multiple Incidents for the same bike
   const [incidents, setIncidents] = useState<IncidentItemState[]>([
@@ -71,16 +88,53 @@ export default function ComplaintRegistrationPage() {
     },
   ])
 
-  // Auto-map vehicle details when chassis number is entered or selected
-  const handleChassisChange = (vin: string) => {
-    setChassisVin(vin)
-    const match = lookupVehicle(vin)
-    if (match) {
-      setCustomerName(match.customer_name)
-      setCustomerContact(match.customer_contact)
-      setVehicleModel(match.vehicle_model)
-      setRegistrationNumber(match.registration_number)
-      toast.success(`Vehicle details mapped for ${match.chassis_vin}`)
+  // Auto-map vehicle details when chassis number or registration number is entered or selected
+  const handleChassisChange = async (vinOrReg: string) => {
+    setChassisVin(vinOrReg)
+
+    if (!vinOrReg.trim()) return
+
+    // 1. Try local cache first (instant lookup by VIN or Reg Number)
+    const localMatch = lookupVehicle(vinOrReg)
+    if (localMatch) {
+      setChassisVin(localMatch.chassis_vin)
+      setCustomerName(localMatch.customer_name)
+      setCustomerContact(localMatch.customer_contact)
+      setVehicleModel(localMatch.vehicle_model)
+      setRegistrationNumber(localMatch.registration_number)
+      if ((localMatch as any).delivery_date) setDeliveryDate((localMatch as any).delivery_date)
+      toast.success(`Vehicle details mapped for ${localMatch.customer_name} (VIN ${localMatch.chassis_vin})`)
+      return
+    }
+
+    // 2. Fallback: query Supabase customer_vehicles table by VIN or Reg Number
+    const cleaned = vinOrReg.trim().toUpperCase()
+    if (!isSupabaseConfigured) return
+    try {
+      const { data, error } = await supabase
+        .from('customer_vehicles')
+        .select('chassis_vin, customer_name, customer_contact, vehicle_model, registration_number, delivery_date')
+        .or(`chassis_vin.eq.${cleaned},registration_number.eq.${cleaned}`)
+        .maybeSingle()
+
+      console.log('[Vehicle Lookup]', { cleaned, data, error })
+
+      if (error) {
+        console.error('[Vehicle Lookup] Supabase error:', error.message)
+        return
+      }
+
+      if (data) {
+        setChassisVin(data.chassis_vin)
+        setCustomerName(data.customer_name || '')
+        setCustomerContact(data.customer_contact || '')
+        setVehicleModel(data.vehicle_model || 'Raptee HV-T30')
+        setRegistrationNumber(data.registration_number || '')
+        if (data.delivery_date) setDeliveryDate(data.delivery_date)
+        toast.success(`Vehicle details fetched for ${data.customer_name} (VIN ${data.chassis_vin})`)
+      }
+    } catch (err) {
+      console.warn('Vehicle lookup failed:', err)
     }
   }
 
@@ -159,7 +213,7 @@ export default function ComplaintRegistrationPage() {
           customer_contact: customerContact.trim() || null,
           vehicle_model: vehicleModel || null,
           registration_number: registrationNumber.trim().toUpperCase() || null,
-          delivery_date: null,
+          delivery_date: deliveryDate || null,
           incident_problem: finalProblem,
           issue_summary: inc.issueSummary.trim() || null,
           detailed_description: inc.detailedDescription.trim(),
@@ -292,32 +346,49 @@ export default function ComplaintRegistrationPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Chassis # Input with auto-lookup */}
+            {/* Chassis # or Reg # Input with auto-lookup */}
             <div>
-              <label className="form-label form-label-required">Chassis / VIN #</label>
+              <label className="form-label form-label-required">
+                Chassis / VIN # or Reg Number
+              </label>
               <div className="space-y-1.5">
                 <input
                   type="text"
                   required
                   list="chassis-options"
-                  placeholder="Type or enter Chassis # (e.g. P5KTAAACD6MP00011)"
+                  placeholder="Enter VIN (e.g. 24, 35) or Reg # (e.g. TN11BX4667)"
                   value={chassisVin}
                   onChange={(e) => handleChassisChange(e.target.value)}
                   className="form-input font-mono uppercase font-semibold text-gray-900 border-raptee-500/40 focus:border-raptee-500"
                 />
                 <datalist id="chassis-options">
-                  {getAllLocalVehicles().map((v) => (
-                    <option key={v.chassis_vin} value={v.chassis_vin}>
-                      {v.customer_name ? `${v.customer_name} (${v.registration_number || v.vehicle_model})` : v.chassis_vin}
-                    </option>
-                  ))}
+                  {[
+                    ...getAllLocalVehicles(),
+                    ...remoteVehicles.filter(
+                      (rv) => !getAllLocalVehicles().some((lv) => lv.chassis_vin === rv.chassis_vin)
+                    ),
+                  ].flatMap((v) => [
+                    <option key={`vin-${v.chassis_vin}`} value={v.chassis_vin}>
+                      VIN {v.chassis_vin}: {v.customer_name} ({v.registration_number || v.vehicle_model})
+                    </option>,
+                    ...(v.registration_number ? [
+                      <option key={`reg-${v.chassis_vin}`} value={v.registration_number}>
+                        {v.registration_number} — {v.customer_name} (VIN {v.chassis_vin})
+                      </option>
+                    ] : [])
+                  ])}
                 </datalist>
 
                 {/* Quick Select Buttons for sample chassis */}
-                {getAllLocalVehicles().length > 0 ? (
+                {(getAllLocalVehicles().length > 0 || remoteVehicles.length > 0) ? (
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
-                    <span className="text-[11px] text-gray-400">Imported vehicles:</span>
-                    {getAllLocalVehicles().slice(0, 5).map((kv) => (
+                    <span className="text-[11px] text-gray-400">Sample VINs:</span>
+                    {[
+                      ...getAllLocalVehicles(),
+                      ...remoteVehicles.filter(
+                        (rv) => !getAllLocalVehicles().some((lv) => lv.chassis_vin === rv.chassis_vin)
+                      ),
+                    ].slice(0, 7).map((kv) => (
                       <button
                         type="button"
                         key={kv.chassis_vin}
@@ -327,9 +398,9 @@ export default function ComplaintRegistrationPage() {
                             ? 'bg-raptee-50 border-raptee-400 text-raptee-700 font-semibold'
                             : 'bg-gray-50 border-gray-200 hover:bg-gray-100 text-gray-600'
                         }`}
-                        title={kv.customer_name || kv.chassis_vin}
+                        title={`${kv.customer_name} (${kv.registration_number})`}
                       >
-                        {kv.chassis_vin.slice(-7)}
+                        VIN {kv.chassis_vin}
                       </button>
                     ))}
                     <button
@@ -337,7 +408,7 @@ export default function ComplaintRegistrationPage() {
                       onClick={() => setIsExcelImportOpen(true)}
                       className="text-[11px] text-emerald-600 hover:text-emerald-800 font-medium underline ml-1"
                     >
-                      + Import more from Excel
+                      + Import Spreadsheet
                     </button>
                   </div>
                 ) : (
@@ -396,6 +467,17 @@ export default function ComplaintRegistrationPage() {
                 value={registrationNumber}
                 onChange={(e) => setRegistrationNumber(e.target.value)}
                 className="form-input uppercase bg-gray-50/50 font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="form-label">Delivery Date</label>
+              <input
+                type="date"
+                placeholder="Auto-mapped delivery date"
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                className="form-input bg-gray-50/50"
               />
             </div>
 
